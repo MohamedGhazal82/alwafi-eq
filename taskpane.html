@@ -21,7 +21,7 @@ button:disabled{opacity:.45;cursor:default}
 .tools{display:flex;flex-wrap:wrap;gap:4px}
 .tools button{padding:3px 7px;min-width:30px}
 .sym{font-family:"Times New Roman",serif;font-size:16px;line-height:1}
-textarea{width:100%;min-height:96px;resize:vertical;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:16px/1.6 Consolas,"Courier New","Segoe UI",monospace;background:#fff;color:var(--ink);unicode-bidi:plaintext}
+textarea{width:100%;min-height:150px;resize:vertical;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:16px/1.6 Consolas,"Courier New","Segoe UI",monospace;background:#fff;color:var(--ink);unicode-bidi:plaintext}
 textarea:focus{outline:2px solid var(--soft);border-color:var(--accent)}
 #preview{min-height:90px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:12px;border-radius:8px;background:#fff;border:1px dashed var(--line)}
 #preview svg{max-width:100%;height:auto}
@@ -41,6 +41,7 @@ input[type=number]{width:64px}
 .help{font-size:12.5px;line-height:1.8}
 .help code{direction:ltr;unicode-bidi:isolate;font-family:Consolas,monospace;background:#f1f3f6;border-radius:4px;padding:0 4px;white-space:nowrap}
 .hidden{display:none!important}
+.structbar{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;background:#f0f7ec;border-radius:8px;padding:6px 10px;font-size:13px;margin:6px 0}.structbar input[type=number]{width:58px}
 </style>
 </head>
 <body>
@@ -75,8 +76,20 @@ input[type=number]{width:64px}
     <button class="sym" data-t="Δ">Δ</button>
     <button data-t="{>}" title="سهم تفاعل">→</button>
     <button data-t="{=}" title="اتزان">⇌</button>
+      <button data-ins="struct" title="صيغة بنائية: اكتب الصفوف زي ما هتطلع">تركيب</button>
+      <button class="sym" data-t="_{(ℓ)}" title="سائل">(ℓ)</button>
+      <button class="sym" data-t="_{(aq)}" title="محلول">(aq)</button>
+      <button class="sym" data-t="_{(s)}" title="صلب">(s)</button>
+      <button class="sym" data-t="_{(g)}" title="غاز">(g)</button>
+      <button class="sym" data-t="_{(v)}" title="بخار">(v)</button>
   </div>
 
+<div class="structbar hidden" id="structbar">
+      <b>التركيب:</b>
+      <label>الشكل <input type="number" id="st-size" value="100" min="30" max="300" step="5">%</label>
+      <label>الحروف <input type="number" id="st-font" value="100" min="30" max="300" step="5">%</label>
+      <label><input type="checkbox" id="st-long"> رابطة رأسية طويلة</label>
+    </div>
   <textarea id="src" spellcheck="false" placeholder="عدد المولات = {الكتلة}/{الكتلة المولية}"></textarea>
   <div id="preview"><span class="msg">المعاينة هنا</span></div>
   <div class="msg" id="msg"></div>
@@ -107,6 +120,7 @@ input[type=number]{width:64px}
       أُس <code>x^2</code> <code>x^{n+1}</code> &nbsp; سفلي <code>H_2O</code><br>
       ضرب <code>*</code> &nbsp; ناقص <code>-</code><br>
       أسهم <code>{>}</code> <code>{=}</code> <code>{>h}</code> <code>{>MnO_2}</code> <code>{=فوق/تحت}</code><br>
+      تركيب: زرار «تركيب» واكتب الصفوف زي ما هتطلع، <code>-</code> <code>=</code> <code>#</code> روابط و <code>|</code> رأسية تحت الحرف<br>
       Enter = سطر جديد، والسطور بتتظبط عند =<br>
       Ctrl+Enter = إدراج
     </div>
@@ -2551,6 +2565,14 @@ let parseOne = null;
           }
           out.push({ t: 'ch', c: s[i + 1] }); i += 2; continue;
         }
+        if (c === '{' && s[i + 1] === '#') {
+          const j = s.indexOf('#}', i + 2);
+          const raw = j < 0 ? s.slice(i + 2) : s.slice(i + 2, j);
+          out.push({ t: 'struct', raw });
+          i = j < 0 ? s.length : j + 2;
+          continue;
+        }
+        if (c === '\n') { i++; out.push({ t: 'ch', c: ' ' }); continue; }
         const code = codeAt();
         if (code) { out.push({ t: 'code', c: code }); i += code.length; continue; }
         if (c === '{') {
@@ -2597,7 +2619,7 @@ function parseAll(text) {
     else if (ch === '\n' && depth === 0) { lines.push(text.slice(start, k)); start = k + 1; }
   }
   lines.push(text.slice(start));
-  return lines.map(l => parseOne(l.replace(/\n/g, ' ')));
+  return lines.map(l => parseOne(l));
 }
 
 // ---------------- bidi helpers ----------------
@@ -2613,6 +2635,7 @@ function nodeClass(n) {
     case 'ch': return charClass(n.c);
     case 'group': case 'paren': return firstStrong(n.items) || 'N';
     case 'script': return nodeClass(n.base) === 'D' ? 'D' : (nodeClass(n.base));
+    case 'struct': return 'L';
     default: return 'N';
   }
 }
@@ -2759,7 +2782,7 @@ function createEngine(hb) {
       const n = items[k];
       if (n.t === 'ch' && n.c === ' ') {
         const prev = clean[clean.length - 1], next = items[k + 1];
-        if ((prev && prev.t === 'op') || (next && (next.t === 'op' || (next.t === 'ch' && next.c === ' ')))) continue;
+        if ((prev && prev.t === 'op') || (next && next.t === 'op')) continue;
         if (!prev) continue;
       }
       clean.push(n);
@@ -2896,6 +2919,7 @@ function createEngine(hb) {
         return rootBox(e.n, ctx, ctx.mirror && arabic);
       }
       case 'script': return scriptBox(e, ctx, rtl);
+      case 'struct': return structBox(e.n.raw, ctx);
     }
     return emptyBox();
   }
@@ -2928,6 +2952,252 @@ function createEngine(hb) {
     o.h = Math.max(o.h, a + HHs + GAPs);
     o.eqs = [];
     return o;
+  }
+
+  // ---------- typed structural formulas: {# rows #} ----------
+  // Rows are laid out like the text: '-' '=' '#' bonds between groups, '|' (or '‖') below/above an atom,
+  // '/' '\' diagonal. Digits after a letter become subscripts. First line may hold options: !size=90 font=110 long
+  const HB_CH = new Set(['-', '=', '#', '≡', '–', '—', '~']);
+  const VB_CH = new Set(['|', '‖', '¦']);
+  const DG_CH = new Set(['/', '\\']);
+  function structLabelSrc(t) {
+    if (/[_^{]/.test(t)) return t;
+    return t.replace(/([A-Za-z\)\]])(\d+)/g, '$1_{$2}');
+  }
+  function structBox(raw, ctx) {
+    let lines = raw.replace(/\r/g, '').split('\n');
+    const opt = { size: 100, font: 100, long: false };
+    while (lines.length && !lines[0].trim()) lines.shift();
+    if (lines.length && /^\s*!/.test(lines[0])) {
+      const o = lines.shift().replace(/^\s*!/, '');
+      for (const m of o.matchAll(/(size|font)\s*=\s*(\d+)/g)) opt[m[1]] = Math.max(30, Math.min(300, +m[2]));
+      if (/\blong\b/.test(o)) opt.long = true;
+    }
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    if (!lines.length) return emptyBox();
+    const ind = Math.min(...lines.filter(l => l.trim()).map(l => l.match(/^ */)[0].length));
+    lines = lines.map(l => l.slice(ind).replace(/\t/g, '    '));
+
+    const S = ctx.s * opt.size / 100;          // geometry scale
+    const F = ctx.s * opt.font / 100;          // label scale
+    const em = UPEM;
+    const lctx = sub(ctx, { s: F, script: true, struct: true });
+    const T = 26 * S;                           // bond thickness
+    const HB = 0.5 * em * S, HG = 0.1 * em * S;   // horizontal bond length / end gap
+    const VG = 0.13 * em * S, VS = 0.4 * em * S, VL = 0.7 * em * S;
+    const DD = 0.38 * em * S;                   // diagonal horizontal run
+
+    // ---- tokenize ----
+    const nodes = [], hb = [], vb = [], db = [];
+    const rowNodes = lines.map(() => []);
+    lines.forEach((line, r) => {
+      let c = 0;
+      while (c < line.length) {
+        const ch = line[c];
+        if (ch === ' ' || HB_CH.has(ch) || VB_CH.has(ch) || DG_CH.has(ch)) {
+          if (VB_CH.has(ch)) {
+            if (ch === '|' && line[c + 1] === '|') { vb.push({ r, c: c + 0.5, type: 2 }); c += 2; continue; }
+            vb.push({ r, c, type: ch === '‖' ? 2 : 1 });
+          } else if (DG_CH.has(ch)) db.push({ r, c, dir: ch === '/' ? 1 : -1 });
+          c++; continue;
+        }
+        let e = c, depth = 0;
+        while (e < line.length) {
+          const x = line[e];
+          if (x === '{') depth++; else if (x === '}') depth--;
+          if (depth <= 0 && (x === ' ' || HB_CH.has(x) || VB_CH.has(x) || DG_CH.has(x))) {
+            // keep a charge like ^- or ^{2-} inside the label
+            if (HB_CH.has(x) && line[e - 1] === '^') { e++; continue; }
+            break;
+          }
+          e++;
+        }
+        const n = { id: nodes.length, r, c0: c, c1: e, text: line.slice(c, e) };
+        nodes.push(n); rowNodes[r].push(n);
+        c = e;
+      }
+    });
+    if (!nodes.length) return emptyBox();
+    // horizontal bonds: bond chars between consecutive nodes in a row
+    rowNodes.forEach((ns, r) => {
+      for (let k = 0; k + 1 < ns.length; k++) {
+        const between = lines[r].slice(ns[k].c1, ns[k + 1].c0);
+        const b = between.replace(/[ |‖¦\/\\]/g, '');
+        if (!b) continue;
+        const type = /[#≡]/.test(b) ? 3 : /=/.test(b) ? 2 : 1;
+        hb.push({ a: ns[k], b: ns[k + 1], type, extra: 0 });
+      }
+    });
+    // label boxes and character centres
+    const labelCache = new Map();
+    function lab(t) {
+      let b = labelCache.get(t);
+      if (!b) { b = layoutSeq(parseOne(structLabelSrc(t)), lctx, 'L'); labelCache.set(t, b); }
+      return b;
+    }
+    for (const n of nodes) { n.box = lab(n.text); n.w = n.box.w; }
+    function cx(n, k) {
+      k = Math.max(0, Math.min(n.text.length - 1, Math.round(k)));
+      const a = k ? lab(n.text.slice(0, k)).w : 0;
+      const b = lab(n.text.slice(0, k + 1)).w;
+      return (a + b) / 2;
+    }
+    function nodeAt(r, c, dirRow) {
+      for (let rr = r + dirRow; rr >= 0 && rr < lines.length; rr += dirRow) {
+        const ns = rowNodes[rr];
+        if (!ns.length) {
+          // keep going through bond-only rows
+          continue;
+        }
+        let best = null, bd = 1e9;
+        for (const n of ns) {
+          const d = c < n.c0 ? n.c0 - c : c >= n.c1 ? c - n.c1 + 1 : 0;
+          if (d < bd) { bd = d; best = n; }
+        }
+        if (best && bd <= 2) return { n: best, k: Math.max(0, Math.min(best.text.length - 1, c - best.c0)) };
+        return null;
+      }
+      return null;
+    }
+    // vertical / diagonal edges (merge stacked '|' characters into one bond)
+    const vEdges = [];
+    const seen = new Set();
+    for (const v of vb) {
+      const up = nodeAt(v.r, Math.floor(v.c), -1), dn = nodeAt(v.r, Math.floor(v.c), 1);
+      if (!up || !dn) continue;
+      const key = up.n.id + ':' + dn.n.id + ':' + Math.round(v.c);
+      if (seen.has(key)) continue; seen.add(key);
+      let ku = up.k, kd = dn.k;
+      if (v.type === 2 && v.c % 1) { ku = v.c - up.n.c0; kd = v.c - dn.n.c0; }
+      vEdges.push({ u: up.n, ku, d: dn.n, kd, type: v.type, frac: v.c % 1 ? 0.5 : 0 });
+    }
+    const dEdges = [];
+    for (const g of db) {
+      // '/' : upper node to the right, lower to the left
+      const up = nodeAt(g.r, g.c + g.dir, -1), dn = nodeAt(g.r, g.c - g.dir, 1);
+      if (!up || !dn) continue;
+      dEdges.push({ u: up.n, ku: up.k, d: dn.n, kd: dn.k, dir: g.dir });
+    }
+
+    // ---- horizontal placement ----
+    const mainRow = rowNodes.reduce((best, ns, r) => ns.length > rowNodes[best].length ? r : best, rowNodes.findIndex(ns => ns.length));
+    const spacing = e => e.type ? HB + 2 * HG + e.extra : 0;
+    function place() {
+      for (const n of nodes) n.x = undefined;
+      const root = rowNodes[mainRow][0];
+      root.x = 0;
+      const queue = [root];
+      const relax = () => {
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const e of hb) {
+            if (e.a.x !== undefined && e.b.x === undefined) { e.b.x = e.a.x + e.a.w + spacing(e); changed = true; }
+            else if (e.b.x !== undefined && e.a.x === undefined) { e.a.x = e.b.x - spacing(e) - e.a.w; changed = true; }
+          }
+          for (const e of vEdges) {
+            const fu = e.frac ? (lab(e.u.text.slice(0, Math.floor(e.ku) + 1)).w) : cx(e.u, e.ku);
+            const fd = e.frac ? (lab(e.d.text.slice(0, Math.floor(e.kd) + 1)).w) : cx(e.d, e.kd);
+            if (e.u.x !== undefined && e.d.x === undefined) { e.d.x = e.u.x + fu - fd; changed = true; }
+            else if (e.d.x !== undefined && e.u.x === undefined) { e.u.x = e.d.x + fd - fu; changed = true; }
+          }
+          for (const e of dEdges) {
+            const fu = cx(e.u, e.ku), fd = cx(e.d, e.kd);
+            if (e.u.x !== undefined && e.d.x === undefined) { e.d.x = e.u.x + fu - e.dir * DD - fd; changed = true; }
+            else if (e.d.x !== undefined && e.u.x === undefined) { e.u.x = e.d.x + fd + e.dir * DD - fu; changed = true; }
+          }
+        }
+      };
+      relax();
+      // unconnected nodes: place from text columns next to a placed node
+      const charW = 0.5 * em * F;
+      let guard = 0;
+      while (nodes.some(n => n.x === undefined) && guard++ < nodes.length) {
+        for (const n of nodes) {
+          if (n.x !== undefined) continue;
+          const ref = rowNodes[n.r].find(m => m.x !== undefined) || nodes.find(m => m.x !== undefined);
+          n.x = ref.x + (n.c0 - ref.c0) * charW;
+          break;
+        }
+        relax();
+      }
+    }
+    place();
+    // resolve overlaps in rows other than the main one by lengthening the chain bond under them
+    for (let it = 0; it < 12; it++) {
+      let fixed = false;
+      for (let r = 0; r < lines.length; r++) {
+        const ns = rowNodes[r].slice().sort((a, b) => a.x - b.x);
+        for (let k = 0; k + 1 < ns.length; k++) {
+          const A = ns[k], B = ns[k + 1];
+          const gap = 0.14 * em * F;
+          const ov = A.x + A.w + gap - B.x;
+          if (ov <= 0.5) continue;
+          if (hb.some(e => (e.a === A && e.b === B) || (e.a === B && e.b === A))) continue;
+          // the chain bond between the atoms they hang from
+          const ea = vEdges.find(e => e.u === A || e.d === A) || dEdges.find(e => e.u === A || e.d === A);
+          const eb = vEdges.find(e => e.u === B || e.d === B) || dEdges.find(e => e.u === B || e.d === B);
+          if (!ea || !eb) continue;
+          const PA = ea.u === A ? ea.d : ea.u, PB = eb.u === B ? eb.d : eb.u;
+          const bond = hb.find(e => e.a.r === PA.r && e.a.x >= PA.x - 1 && e.b.x <= PB.x + 1 && e.b.x > PA.x);
+          if (!bond) continue;
+          bond.extra += ov; fixed = true;
+        }
+      }
+      if (!fixed) break;
+      place();
+    }
+
+    // ---- vertical placement ----
+    const rowH = lines.map((_, r) => Math.max(0, ...rowNodes[r].map(n => n.box.h)));
+    const rowD = lines.map((_, r) => Math.max(0, ...rowNodes[r].map(n => n.box.d)));
+    const nodeRows = rowNodes.map((ns, r) => ns.length ? r : -1).filter(r => r >= 0);
+    const base = {};
+    base[mainRow] = 0;
+    const capF = CAP * F;
+    const bondRowsBetween = (a, b) => { for (let r = a + 1; r < b; r++) if (!rowNodes[r].length && lines[r].trim()) return true; return false; };
+    const step = (a, b) => {
+      const vlen = opt.long ? VL : VS;
+      if (bondRowsBetween(a, b)) return Math.max(VG + vlen + VG + capF, rowD[a] + rowH[b] + 0.12 * em * S);
+      return Math.max(rowD[a] + rowH[b] + 0.18 * em * F, 1.15 * em * F);
+    };
+    const mi = nodeRows.indexOf(mainRow);
+    for (let k = mi - 1; k >= 0; k--) base[nodeRows[k]] = base[nodeRows[k + 1]] + step(nodeRows[k], nodeRows[k + 1]);
+    for (let k = mi + 1; k < nodeRows.length; k++) base[nodeRows[k]] = base[nodeRows[k - 1]] - step(nodeRows[k - 1], nodeRows[k]);
+
+    // ---- draw ----
+    const o = emptyBox();
+    const minX = Math.min(...nodes.map(n => n.x));
+    const X = x => x - minX;
+    const line = (x1, y1, x2, y2, t = T) => o.prims.push({ path: strokePolyline([[x1, y1], [x2, y2]], [t]), x: 0, y: 0, s: 1 });
+    for (const n of nodes) appendBox(o, n.box, X(n.x), base[n.r]);
+    const axis = AXIS * F;
+    for (const e of hb) {
+      const x1 = X(e.a.x + e.a.w) + HG, x2 = X(e.b.x) - HG, y = base[e.a.r] + axis;
+      if (e.type === 1) line(x1, y, x2, y);
+      else if (e.type === 2) { const dy = 0.065 * em * S; line(x1, y + dy, x2, y + dy); line(x1, y - dy, x2, y - dy); }
+      else { const dy = 0.095 * em * S; line(x1, y + dy, x2, y + dy); line(x1, y, x2, y); line(x1, y - dy, x2, y - dy); }
+    }
+    for (const e of vEdges) {
+      const xu = X(e.u.x) + (e.frac ? lab(e.u.text.slice(0, Math.floor(e.ku) + 1)).w : cx(e.u, e.ku));
+      const top = base[e.u.r] - VG, bot = base[e.d.r] + capF + VG;
+      let y1 = top, y2 = bot;
+      if (!opt.long) { const mid = (top + bot) / 2; y1 = mid + VS / 2; y2 = mid - VS / 2; }
+      if (e.type === 2) { const dx = 0.06 * em * S; line(xu - dx, y1, xu - dx, y2); line(xu + dx, y1, xu + dx, y2); }
+      else line(xu, y1, xu, y2);
+    }
+    for (const e of dEdges) {
+      const xu = X(e.u.x) + cx(e.u, e.ku), xd = X(e.d.x) + cx(e.d, e.kd);
+      const y1 = base[e.u.r] - VG, y2 = base[e.d.r] + capF + VG;
+      line(xu, y1, xd, y2);
+    }
+    o.w = Math.max(...nodes.map(n => X(n.x) + n.w));
+    // a little room on both sides so neighbours never touch
+    const pad = 0.08 * em * F;
+    const out = emptyBox(); appendBox(out, o, pad, 0); out.w = o.w + 2 * pad;
+    out.eqs = [];
+    out.isStruct = true;
+    return out;
   }
 
   function sub(ctx, extra) { return Object.assign({}, ctx, { inner: true }, extra); }
@@ -3073,7 +3343,7 @@ function createEngine(hb) {
     const sctx = sub(ctx, { s: ss, script: true });
     const sup = n.sup ? layoutSeq(n.sup, sctx, rtl ? 'R' : 'L') : null;
     const sb = n.sub ? layoutSeq(n.sub, sctx, rtl ? 'R' : 'L') : null;
-    const isText = n.base.t === 'ch';
+    const isText = n.base.t === 'ch' || n.base.t === 'struct';
     let u = 0, v = 0;
     if (sup) u = Math.max(0.63 * CAP * s, isText ? 0 : base.h - 0.55 * sup.h);
     if (sb) v = Math.max(0.43 * CAP * s, isText ? 0 : base.d + 0.3 * sb.h * 0.5);
@@ -3083,7 +3353,7 @@ function createEngine(hb) {
       if (gap < minGap) { const add = (minGap - gap) / 2; u += add; v += add; }
     }
     const left = rtl && nodeClass(n.base) === 'R';
-    const kern = 0.03 * em;
+    const kern = n.base.t === 'struct' ? 0.1 * em : 0.03 * em;
     const sw = Math.max(sup ? sup.w : 0, sb ? sb.w : 0);
     const o = emptyBox();
     if (!left) {
@@ -3242,6 +3512,7 @@ $('tools').addEventListener('click', ev=>{
     case 'sub': insertText('_{','}'); break;
     case 'paren': insertText('(',')'); break;
     case 'brack': insertText('[',']'); break;
+    case 'struct': insertText('{#\n','\n#}'); break;
   }
 });
 let timer=null;
@@ -3408,6 +3679,73 @@ if (window.Office && Office.onReady){
     setBtns();
   });
 } else { msg('افتح اللوحة دي من جوه الوورد علشان الإدراج يشتغل.'); }
+})();
+</script>
+<script>
+// ---- structure block helpers (shared by the editor page and the Word pane) ----
+(function(){
+  const ta = document.getElementById('src');
+  const bar = document.getElementById('structbar');
+  if (!ta || !bar) return;
+  const inSize = document.getElementById('st-size'), inFont = document.getElementById('st-font'), inLong = document.getElementById('st-long');
+  function block(){
+    const v = ta.value, p = ta.selectionStart;
+    const a = v.lastIndexOf('{#', p);
+    if (a < 0) return null;
+    const close = v.indexOf('#}', a + 2);
+    if (close < 0 || close + 2 < p) return null;
+    const bodyStart = a + 2;
+    const nl = v.indexOf('\n', bodyStart);
+    const firstLine = v.slice(bodyStart, nl < 0 || nl > close ? close : nl);
+    const hasHdr = /^\s*!/.test(firstLine);
+    return { a, close, bodyStart, firstLine, hasHdr };
+  }
+  function readOpts(b){
+    const o = { size: 100, font: 100, long: false };
+    if (b.hasHdr){
+      const m1 = b.firstLine.match(/size\s*=\s*(\d+)/), m2 = b.firstLine.match(/font\s*=\s*(\d+)/);
+      if (m1) o.size = +m1[1]; if (m2) o.font = +m2[1];
+      o.long = /\blong\b/.test(b.firstLine);
+    }
+    return o;
+  }
+  function refresh(){
+    const b = block();
+    bar.classList.toggle('hidden', !b);
+    if (!b) return;
+    const o = readOpts(b);
+    if (document.activeElement !== inSize) inSize.value = o.size;
+    if (document.activeElement !== inFont) inFont.value = o.font;
+    inLong.checked = o.long;
+  }
+  function write(){
+    const b = block(); if (!b) return;
+    const size = Math.max(30, Math.min(300, parseInt(inSize.value) || 100));
+    const font = Math.max(30, Math.min(300, parseInt(inFont.value) || 100));
+    const parts = [];
+    if (size !== 100) parts.push('size=' + size);
+    if (font !== 100) parts.push('font=' + font);
+    if (inLong.checked) parts.push('long');
+    const hdr = parts.length ? '!' + parts.join(' ') : '';
+    const v = ta.value, caret = ta.selectionStart;
+    let before, after, delta;
+    if (b.hasHdr){
+      before = v.slice(0, b.bodyStart); after = v.slice(b.bodyStart + b.firstLine.length);
+      delta = hdr.length - b.firstLine.length;
+      ta.value = before + hdr + after;
+    } else if (hdr){
+      before = v.slice(0, b.bodyStart); after = v.slice(b.bodyStart);
+      const ins = after.startsWith('\n') ? hdr : hdr + '\n';
+      delta = ins.length;
+      ta.value = before + ins + after;
+    } else return;
+    const np = caret + (caret > b.bodyStart ? delta : 0);
+    ta.setSelectionRange(np, np);
+    ta.dispatchEvent(new Event('input'));
+  }
+  for (const ev of ['keyup','click','select','input']) ta.addEventListener(ev, refresh);
+  inSize.addEventListener('change', write); inFont.addEventListener('change', write); inLong.addEventListener('change', write);
+  refresh();
 })();
 </script>
 </body>
