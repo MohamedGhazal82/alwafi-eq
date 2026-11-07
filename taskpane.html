@@ -57,7 +57,10 @@ input[type=number]{width:64px}
     <button id="loadsel">تعديلها</button>
     <button id="editsel" class="primary">تعديل في المحرر</button>
   </div>
-  <button id="openved" class="primary" style="width:100%;padding:9px;font-size:15px;border-radius:10px;background:#0A84FF;border-color:#0A84FF">✎ المحرر المرئي للمعادلات</button>
+  <div style="display:flex;gap:6px">
+    <button id="openved" class="primary" style="flex:1;padding:9px;font-size:14px;border-radius:10px;background:#0A84FF;border-color:#0A84FF">✎ محرر المعادلات</button>
+    <button id="opensd" class="primary" style="flex:1;padding:9px;font-size:14px;border-radius:10px;background:#28A745;border-color:#28A745">⌬ رسم الصيغ البنائية</button>
+  </div>
 
   <div class="tools" id="tools">
     <button data-ins="frac" title="كسر {البسط}/{المقام}">كسر</button>
@@ -5563,7 +5566,7 @@ function nameOf(g, lang) {
     groups.forEach(gq => gq.locs.sort((a, b) => a - b));
     const L = d.len;
     if (L === 1 || (L === 2 && d.subs.length === 1 && !d.multi.length)) groups.forEach(gq => gq.noLoc = true);
-    const needLoc = (kind) => kind === 'multi' ? L > 3 : kind === 'ol' ? L > 2 : kind === 'one' ? L > 4 : false;
+    const needLoc = (kind) => kind === 'multi' ? L > 3 : kind === 'ol' ? L > 2 : kind === 'one' ? (L > 4 || (L > 3 && d.subs.length > 0)) : false;
     const ene = d.multi.filter(m => m[0] === 'ene').map(m => m[1]), yne = d.multi.filter(m => m[0] === 'yne').map(m => m[1]);
     if (lang === 'en') {
       const pre = groups.map(gq => (gq.noLoc ? '' : gq.locs.join(',') + '-') + MULT_EN[gq.locs.length] + gq.en).join('-');
@@ -5916,7 +5919,7 @@ $('tools').addEventListener('click', ev=>{
   }
 });
 let timer=null;
-ta.addEventListener('input', ()=>{ clearTimeout(timer); timer=setTimeout(render,120); });
+ta.addEventListener('input', ()=>{ extraDoc = null; clearTimeout(timer); timer=setTimeout(render,120); });
 ta.addEventListener('keydown', ev=>{ if (ev.key==='Enter' && (ev.ctrlKey||ev.metaKey)){ ev.preventDefault(); doInsert(false); } });
 for (const id of ['size','weight','dir','digits','align','mirror']) $(id).addEventListener('change', render);
 function msg(t, kind){ const m=$('msg'); m.textContent=t||''; m.className='msg'+(kind?' '+kind:''); }
@@ -5988,7 +5991,7 @@ async function doInsert(replace){
   try{
     const png = await pngBase64(out.svg, out.Wpt, out.Hpt);
     const depth = last.lines===1 ? out.depthPt : 0;
-    const descr = TAG + JSON.stringify(last.kind ? { src, opts:o, kind:last.kind } : { src, opts:o });
+    const descr = TAG + JSON.stringify(Object.assign(last.kind ? { src, opts:o, kind:last.kind } : { src, opts:o }, extraDoc ? { doc: extraDoc } : {}));
     const ooxml = buildOoxml(out.svg, png, out.Wpt, out.Hpt, depth, descr, !replace);
     await Word.run(async ctx=>{
       const sel = ctx.document.getSelection();
@@ -6025,6 +6028,7 @@ async function loadFromSelection(silent){
     });
     if (!found){ if(!silent) msg('مفيش معادلة من الوافي محددة.','err'); return false; }
     const data = JSON.parse(found.slice(TAG.length));
+    selDoc = data.doc || null;
     if (window.AlwafiUI) AlwafiUI.setMode(data.kind==='lab' ? 'lab' : (/\{#/.test(data.src) ? 'chem' : 'math'));
     ta.value = data.src; applyOpts(data.opts); render();
     msg('عدّل ودوس «تحديث المحددة».','good');
@@ -6034,13 +6038,16 @@ async function loadFromSelection(silent){
 $('loadsel').onclick = ()=>loadFromSelection(false);
 // ---------- visual editor (dialog) ----------
 let dlg = null;
-function openEditor(edit){
-  if (!inWord || !Office.context.ui || !Office.context.ui.displayDialogAsync){ window.open('editor.html','_blank'); return; }
-  let url = location.href.replace(/[^/]*([?#].*)?$/,'') + 'editor.html?dialog=1' + (edit ? '&edit=1' : '');
+let extraDoc = null, selDoc = null;
+function openEditor(edit, page){
+  page = page || 'editor.html';
+  if (!inWord || !Office.context.ui || !Office.context.ui.displayDialogAsync){ window.open(page,'_blank'); return; }
+  let url = location.href.replace(/[^/]*([?#].*)?$/,'') + page + '?dialog=1' + (edit ? '&edit=1' : '');
   if (edit){
-    const data = JSON.stringify({ src: ta.value, opts: opts() });
+    const o = Object.assign(opts(), selDoc ? { chemDoc: selDoc } : {});
+    const data = JSON.stringify({ src: ta.value, opts: o });
     if (data.length < 1600) url += '#' + encodeURIComponent(data);
-    else lsSet('alwafi-ved-handoff', { t: Date.now(), src: ta.value, opts: opts(), edit: true });
+    else lsSet(page === 'structure.html' ? 'alwafi-sd-handoff' : 'alwafi-ved-handoff', { t: Date.now(), src: ta.value, opts: o, edit: true });
   }
   try { if (dlg) dlg.close(); } catch(e){}
   Office.context.ui.displayDialogAsync(url, { height: 88, width: 82, displayInIframe: false }, res => {
@@ -6050,15 +6057,16 @@ function openEditor(edit){
       try {
         const d = JSON.parse(a.message);
         if (window.AlwafiUI) AlwafiUI.setMode(/\{#/.test(d.src) ? 'chem' : 'math');
-        ta.value = d.src; applyOpts(d.opts); render();
+        ta.value = d.src; applyOpts(d.opts); extraDoc = d.opts && d.opts.chemDoc ? d.opts.chemDoc : null; render();
         await doInsert(d.action === 'update');
       } catch(e){ msg('حصلت مشكلة في الإدراج: '+e.message,'err'); }
     });
     dlg.addEventHandler(Office.EventType.DialogEventReceived, () => { dlg = null; });
   });
 }
-$('openved').onclick = ()=>openEditor(false);
-$('editsel').onclick = async ()=>{ const ok = await loadFromSelection(true); if (ok) openEditor(true); else msg('حدد المعادلة الأول.','err'); };
+$('openved').onclick = ()=>{ selDoc = null; openEditor(false); };
+$('opensd').onclick = ()=>{ selDoc = null; openEditor(false, 'structure.html'); };
+$('editsel').onclick = async ()=>{ const ok = await loadFromSelection(true); if (!ok){ msg('حدد المعادلة الأول.','err'); return; } openEditor(true, selDoc || /mol\{/.test(ta.value) ? 'structure.html' : 'editor.html'); };
 
 let selTimer=null;
 async function checkSelection(){

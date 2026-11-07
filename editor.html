@@ -5614,7 +5614,7 @@ function nameOf(g, lang) {
     groups.forEach(gq => gq.locs.sort((a, b) => a - b));
     const L = d.len;
     if (L === 1 || (L === 2 && d.subs.length === 1 && !d.multi.length)) groups.forEach(gq => gq.noLoc = true);
-    const needLoc = (kind) => kind === 'multi' ? L > 3 : kind === 'ol' ? L > 2 : kind === 'one' ? L > 4 : false;
+    const needLoc = (kind) => kind === 'multi' ? L > 3 : kind === 'ol' ? L > 2 : kind === 'one' ? (L > 4 || (L > 3 && d.subs.length > 0)) : false;
     const ene = d.multi.filter(m => m[0] === 'ene').map(m => m[1]), yne = d.multi.filter(m => m[0] === 'yne').map(m => m[1]);
     if (lang === 'en') {
       const pre = groups.map(gq => (gq.noLoc ? '' : gq.locs.join(',') + '-') + MULT_EN[gq.locs.length] + gq.en).join('-');
