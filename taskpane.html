@@ -55,7 +55,9 @@ input[type=number]{width:64px}
   <div class="bar sel hidden" id="selbar">
     <span>محدد معادلة من الوافي.</span>
     <button id="loadsel">تعديلها</button>
+    <button id="editsel" class="primary">تعديل في المحرر</button>
   </div>
+  <button id="openved" class="primary" style="width:100%;padding:9px;font-size:15px;border-radius:10px;background:#0A84FF;border-color:#0A84FF">✎ المحرر المرئي للمعادلات</button>
 
   <div class="tools" id="tools">
     <button data-ins="frac" title="كسر {البسط}/{المقام}">كسر</button>
@@ -4518,8 +4520,10 @@ function createEngine(hb) {
     } else if (align === 'eq' && boxes.some(b => b.eqX != null) && boxes.length > 1) {
       const maxEq = Math.max(...boxes.filter(b => b.eqX != null).map(b => b.eqX));
       offs = boxes.map(b => b.eqX != null ? maxEq - b.eqX : null);
-      const W = Math.max(...boxes.map((b, k) => offs[k] != null ? offs[k] + b.w : 0));
-      offs = offs.map((o, k) => o != null ? o : (anyRTL ? W - boxes[k].w : 0));
+      const Weq = Math.max(...boxes.map((b, k) => offs[k] != null ? offs[k] + b.w : 0));
+      const W = Math.max(Weq, ...boxes.map((b, k) => offs[k] == null ? b.w : 0));
+      const shift = anyRTL ? W - Weq : 0;
+      offs = offs.map((o, k) => o != null ? o + shift : (anyRTL ? W - boxes[k].w : 0));
     } else {
       const mode = align === 'eq' ? (anyRTL ? 'right' : 'left') : align;
       offs = boxes.map(b => mode === 'right' ? W0 - b.w : mode === 'center' ? (W0 - b.w) / 2 : 0);
@@ -6028,6 +6032,33 @@ async function loadFromSelection(silent){
   }catch(e){ if(!silent) msg('معرفتش أقرا المعادلة: '+(e.message||e),'err'); return false; }
 }
 $('loadsel').onclick = ()=>loadFromSelection(false);
+// ---------- visual editor (dialog) ----------
+let dlg = null;
+function openEditor(edit){
+  if (!inWord || !Office.context.ui || !Office.context.ui.displayDialogAsync){ window.open('editor.html','_blank'); return; }
+  let url = location.href.replace(/[^/]*([?#].*)?$/,'') + 'editor.html?dialog=1' + (edit ? '&edit=1' : '');
+  if (edit){
+    const data = JSON.stringify({ src: ta.value, opts: opts() });
+    if (data.length < 1600) url += '#' + encodeURIComponent(data);
+    else lsSet('alwafi-ved-handoff', { t: Date.now(), src: ta.value, opts: opts(), edit: true });
+  }
+  try { if (dlg) dlg.close(); } catch(e){}
+  Office.context.ui.displayDialogAsync(url, { height: 88, width: 82, displayInIframe: false }, res => {
+    if (res.status !== Office.AsyncResultStatus.Succeeded){ msg('مقدرتش أفتح المحرر: '+(res.error && res.error.message),'err'); return; }
+    dlg = res.value;
+    dlg.addEventHandler(Office.EventType.DialogMessageReceived, async a => {
+      try {
+        const d = JSON.parse(a.message);
+        if (window.AlwafiUI) AlwafiUI.setMode(/\{#/.test(d.src) ? 'chem' : 'math');
+        ta.value = d.src; applyOpts(d.opts); render();
+        await doInsert(d.action === 'update');
+      } catch(e){ msg('حصلت مشكلة في الإدراج: '+e.message,'err'); }
+    });
+    dlg.addEventHandler(Office.EventType.DialogEventReceived, () => { dlg = null; });
+  });
+}
+$('openved').onclick = ()=>openEditor(false);
+$('editsel').onclick = async ()=>{ const ok = await loadFromSelection(true); if (ok) openEditor(true); else msg('حدد المعادلة الأول.','err'); };
 
 let selTimer=null;
 async function checkSelection(){
