@@ -41,7 +41,7 @@ input[type=number]{width:64px}
 .help{font-size:12.5px;line-height:1.8}
 .help code{direction:ltr;unicode-bidi:isolate;font-family:Consolas,monospace;background:#f1f3f6;border-radius:4px;padding:0 4px;white-space:nowrap}
 .hidden{display:none!important}
-.structbar{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;background:#f0f7ec;border-radius:8px;padding:6px 10px;font-size:13px;margin:6px 0}.structbar input[type=number]{width:58px}
+.structbar{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;background:#f0f7ec;border-radius:8px;padding:6px 10px;font-size:13px;margin:6px 0}.structbar input[type=number]{width:58px}.structbar .wide{flex:1 1 100%}.structbar input[type=text]{flex:1;min-width:120px;font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:3px 6px}
 </style>
 </head>
 <body>
@@ -89,6 +89,10 @@ input[type=number]{width:64px}
       <label>الشكل <input type="number" id="st-size" value="100" min="30" max="300" step="5">%</label>
       <label>الحروف <input type="number" id="st-font" value="100" min="30" max="300" step="5">%</label>
       <label><input type="checkbox" id="st-long"> رابطة رأسية طويلة</label>
+      <label><input type="checkbox" id="st-kek"> البنزين بروابط</label>
+      <label class="wide">الاسم تحته <input type="text" id="st-name" placeholder="مثلاً: فينول / حمض الكربوليك" dir="auto"></label>
+      <label>حجمه <input type="number" id="st-nsize" value="10" min="5" max="40" step="0.5"> pt</label>
+      <label>لونه <select id="st-ncolor"><option value="">أسود</option><option value="red">أحمر</option><option value="blue">أزرق</option><option value="cyan">سيان</option><option value="green">أخضر</option><option value="magenta">ماجنتا</option></select></label>
     </div>
   <textarea id="src" spellcheck="false" placeholder="عدد المولات = {الكتلة}/{الكتلة المولية}"></textarea>
   <div id="preview"><span class="msg">المعاينة هنا</span></div>
@@ -2524,6 +2528,8 @@ let parseOne = null;
     function peek(k = 0) { return s[i + k]; }
     function charNode(c) {
       if (c === '*') return { t: 'op', c: '×' };
+      if (c === '-' && /[A-Za-z0-9\)\]}]/.test(s[i - 2] || '') && /[A-Z]/.test(s[i] || '')) return { t: 'ch', c: '–' };
+      if (c === '=' && /[A-Za-z0-9\)\]}]/.test(s[i - 2] || '') && /[A-Z]/.test(s[i] || '')) return { t: 'ch', c: '=' };
       if (c === '-' || c === '−') return { t: 'op', c: '−' };
       if (RELATIONS.has(c) || BINARY.has(c)) return { t: 'op', c };
       return { t: 'ch', c };
@@ -2699,12 +2705,12 @@ function emptyBox() { return { w: 0, h: 0, d: 0, prims: [], eqs: [] }; }
 function shiftBox(b, dx, dy) {
   return {
     w: b.w, h: b.h + dy, d: b.d - dy,
-    prims: b.prims.map(p => ({ path: p.path, x: p.x + dx, y: p.y + dy, s: p.s })),
+    prims: b.prims.map(p => Object.assign({}, p, { x: p.x + dx, y: p.y + dy })),
     eqs: b.eqs.map(e => ({ x: e.x + dx, order: e.order })),
   };
 }
 function appendBox(dst, b, x, y = 0) {
-  for (const p of b.prims) dst.prims.push({ path: p.path, x: p.x + x, y: p.y + y, s: p.s });
+  for (const p of b.prims) dst.prims.push(Object.assign({}, p, { x: p.x + x, y: p.y + y }));
   for (const e of b.eqs) dst.eqs.push({ x: e.x + x, order: e.order });
   dst.h = Math.max(dst.h, b.h + y);
   dst.d = Math.max(dst.d, b.d - y);
@@ -2794,7 +2800,7 @@ function createEngine(hb) {
       let cls = nodeClass(n);
       let c = n.c;
       if (n.t === 'ch' && ctx.digits === 'arabic' && DIGIT.test(c)) c = String.fromCharCode(0x660 + (+c));
-      if (n.t === 'ch' && (c === '.' || c === ',' || c === '٫') && k > 0 && k < clean.length - 1 &&
+      if (n.t === 'ch' && (c === '.' || c === ',' || c === '٫' || c === '،' || c === '/' || c === ':') && k > 0 && k < clean.length - 1 &&
         clean[k - 1].t === 'ch' && clean[k + 1].t === 'ch' && charClass(clean[k - 1].c) === 'D' && charClass(clean[k + 1].c) === 'D') {
         cls = 'D';
         if (ctx.digits === 'arabic' && c === '.') c = '٫';
@@ -2880,6 +2886,7 @@ function createEngine(hb) {
     }
     out.w = x;
     out.base = base;
+    if (boxes.length === 1 && boxes[0].core) { out.core = boxes[0].core; out.coreD = boxes[0].coreD; out.isMolCore = boxes[0].isMolCore; }
     return out;
   }
 
@@ -2954,6 +2961,238 @@ function createEngine(hb) {
     return o;
   }
 
+  // ---------- compound name under a structure ----------
+  let nameGroupSeq = 1;
+  const NAME_COLORS = { red: '#ED1C24', blue: '#2E3192', cyan: '#00AEEF', green: '#00A651', magenta: '#EC008C', black: '#000000' };
+  function addName(box, text, ctx, opt) {
+    if (!text || !text.trim()) return box;
+    const ns = ctx.s * (opt.name || 10) / 13;
+    const nctx = sub(ctx, { s: ns, script: false, struct: false });
+    const lines = text.split('\n').filter(t => t.trim());
+    const em = UPEM;
+    const color = NAME_COLORS[opt.ncolor] || (/^#[0-9a-f]{6}$/i.test(opt.ncolor || '') ? opt.ncolor : null);
+    const gid = 'n' + (nameGroupSeq++);
+    const nbs = lines.map(t => layoutSeq(parseOne(t.trim().replace(/-/g, ARABIC.test(t) ? '\\-' : '\u2010')), nctx, null));
+    const W = Math.max(box.w, ...nbs.map(b => b.w));
+    const out = emptyBox();
+    appendBox(out, box, (W - box.w) / 2, 0);
+    let y = -box.d - 0.3 * em * ctx.s;
+    nbs.forEach((nb, i) => {
+      y -= nb.h;
+      const before = out.prims.length;
+      appendBox(out, nb, (W - nb.w) / 2, y);
+      for (let k = before; k < out.prims.length; k++) {
+        const p = out.prims[k];
+        if (color) p.color = color;
+        p.ng = gid; p.nb = y - p.y; p.nl = i;
+      }
+      y -= nb.d + 0.12 * em * ns;
+    });
+    out.w = W; out.eqs = []; out.isStruct = box.isStruct;
+    const c0 = (W - box.w) / 2;
+    out.core = box.core ? [box.core[0] + c0, box.core[1] + c0] : [c0, c0 + box.w];
+    out.coreD = box.coreD != null ? box.coreD : box.d;
+    return out;
+  }
+  // put the names of all compounds in one line on the same baseline
+  function alignNames(box) {
+    const groups = new Map();
+    for (const p of box.prims) if (p.ng && p.nl === 0) {
+      const b = p.y + p.nb;
+      groups.set(p.ng, Math.min(groups.has(p.ng) ? groups.get(p.ng) : 1e9, b));
+    }
+    if (groups.size < 2) return;
+    const low = Math.min(...groups.values());
+    for (const p of box.prims) if (p.ng) p.y += low - groups.get(p.ng);
+    let d = box.d;
+    for (const p of box.prims) if (p.ng) d = Math.max(d, -(p.y + p.nb) + 0.35 * UPEM);
+    box.d = d;
+  }
+
+  // ---------- drawn structures (rings) from atoms + bonds ----------
+  function strokeClosed(pts, t) {
+    const n = pts.length;
+    const off = (sign) => {
+      const lines = [];
+      for (let k = 0; k < n; k++) {
+        const a = pts[k], b = pts[(k + 1) % n];
+        const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+        const nx = -dy / L * sign * t / 2, ny = dx / L * sign * t / 2;
+        lines.push({ p: [a[0] + nx, a[1] + ny], d: [dx, dy] });
+      }
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const l1 = lines[(k + n - 1) % n], l2 = lines[k];
+        out.push(lineIntersect(l1.p, l1.d, l2.p, l2.d) || l2.p);
+      }
+      return out;
+    };
+    const A = off(1), B = off(-1);
+    // one ring outward, one inward, opposite directions -> a hole with nonzero fill
+    const area = P => P.reduce((s, p, i) => { const q = P[(i + 1) % P.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0);
+    let outer = Math.abs(area(A)) > Math.abs(area(B)) ? A : B, inner = outer === A ? B : A;
+    if (area(outer) < 0) outer = outer.slice().reverse();
+    if (area(inner) > 0) inner = inner.slice().reverse();
+    return pathFromPts(outer) + pathFromPts(inner);
+  }
+  function circlePath(cx0, cy0, r, t) {
+    const N = 72, o = [], i = [];
+    for (let k = 0; k < N; k++) {
+      const a = 2 * Math.PI * k / N;
+      o.push([cx0 + (r + t / 2) * Math.cos(a), cy0 + (r + t / 2) * Math.sin(a)]);
+      i.push([cx0 + (r - t / 2) * Math.cos(-a), cy0 + (r - t / 2) * Math.sin(-a)]);
+    }
+    return pathFromPts(o) + pathFromPts(i);
+  }
+  function labelTokens(t) {
+    const out = []; const re = /(\(?[A-Z][a-z]?\d*\)?\d*|[\^][\{]?[0-9+\-]*[\}]?)/g; let m;
+    while ((m = re.exec(t))) if (m[0]) out.push(m[0]);
+    return out.join('') === t ? out : [t];
+  }
+  function reverseLabel(t) {
+    const tk = labelTokens(t);
+    if (tk.length < 2) return t;
+    // keep charges at the end
+    const charge = tk.filter(x => x[0] === '^'), rest = tk.filter(x => x[0] !== '^');
+    return rest.reverse().join('') + charge.join('');
+  }
+  function findRings(nAtoms, bonds) {
+    const adj = Array.from({ length: nAtoms }, () => []);
+    bonds.forEach(b => { adj[b.a].push(b.b); adj[b.b].push(b.a); });
+    const rings = [], seen = new Set();
+    for (let s0 = 0; s0 < nAtoms; s0++) {
+      const stack = [[s0, [s0]]];
+      while (stack.length) {
+        const [v, path] = stack.pop();
+        if (path.length > 7) continue;
+        for (const w of adj[v]) {
+          if (w === s0 && path.length >= 3) {
+            const key = path.slice().sort((a, b) => a - b).join(',');
+            if (!seen.has(key)) { seen.add(key); rings.push(path.slice()); }
+          } else if (!path.includes(w) && w > s0) stack.push([w, path.concat(w)]);
+        }
+      }
+    }
+    // keep the smallest rings only (no ring that is the union of two others)
+    return rings.filter(r => r.length <= 7).sort((a, b) => a.length - b.length);
+  }
+  function molBox(mol, ctx, opt) {
+    const S = ctx.s * (opt.size || 100) / 100, F = ctx.s * (opt.font || 100) / 100;
+    const em = UPEM, L = 0.85 * em * S, T = 40 * S;
+    const lctx = sub(ctx, { s: F, script: true, struct: true });
+    const capF = CAP * F;
+    const atomsIn = mol.atoms, bonds = mol.bonds.map(b => ({ a: b[0], b: b[1], o: b[2] || 1 }));
+    const P = atomsIn.map(a => [a[0] * L, a[1] * L]);
+    const lbl = atomsIn.map(a => a[2] || '');
+    const nbr = atomsIn.map(() => []);
+    bonds.forEach(b => { nbr[b.a].push(b.b); nbr[b.b].push(b.a); });
+    const rings = findRings(atomsIn.length, bonds);
+    const bondKey = (a, b) => a < b ? a + ':' + b : b + ':' + a;
+    const bondMap = new Map(bonds.map(b => [bondKey(b.a, b.b), b]));
+    const circleMode = opt.benzene !== 'kekule';
+    const aromRings = rings.filter(r => {
+      if (r.length !== 6) return false;
+      const os = r.map((v, i) => bondMap.get(bondKey(v, r[(i + 1) % 6])).o);
+      return os.every(o => o === 4) || (os.filter(o => o === 2).length === 3 && os.every((o, i) => o !== 2 || os[(i + 1) % 6] !== 2));
+    });
+    const ringBond = new Set();
+    rings.forEach(r => r.forEach((v, i) => ringBond.add(bondKey(v, r[(i + 1) % r.length]))));
+    const prims = [];
+    const add = path => prims.push({ path, x: 0, y: 0, s: 1 });
+    // labels
+    const labs = lbl.map((t, i) => {
+      if (!t) return null;
+      let dir = [0, 0];
+      nbr[i].forEach(j => { dir[0] += P[i][0] - P[j][0]; dir[1] += P[i][1] - P[j][1]; });
+      const rev = nbr[i].length === 1 && dir[0] < -0.35 * Math.hypot(dir[0], dir[1]);
+      const text = rev ? reverseLabel(t) : t;
+      const box = layoutSeq(parseOne(structLabelSrc(text)), lctx, 'L');
+      // centre of the atom that carries the bond: first atom, or last one when reversed
+      const tk = labelTokens(text);
+      let s0 = 0, e0 = 1;
+      if (tk.length > 1) {
+        const atomTok = rev ? tk.filter(x => x[0] !== '^').length - 1 : 0;
+        let pos = 0; for (let k = 0; k < atomTok; k++) pos += tk[k].length;
+        const sym = tk[atomTok].match(/[A-Z][a-z]?/);
+        s0 = pos + (tk[atomTok].indexOf(sym ? sym[0] : '') || 0); e0 = s0 + (sym ? sym[0].length : 1);
+      } else { const m = text.match(/[A-Z][a-z]?/); if (m) { s0 = m.index; e0 = s0 + m[0].length; } }
+      const wa = s0 ? layoutSeq(parseOne(structLabelSrc(text.slice(0, s0))), lctx, 'L').w : 0;
+      const wb = layoutSeq(parseOne(structLabelSrc(text.slice(0, e0))), lctx, 'L').w;
+      const cxA = (wa + wb) / 2;
+      return { box, x: P[i][0] - cxA, y: P[i][1] - capF / 2, rx: (wb - wa) / 2 + 0.07 * em * F, ry: capF / 2 + 0.1 * em * F };
+    });
+    const trim = (i, dx, dy) => {
+      const l = labs[i]; if (!l) return 0;
+      const L2 = Math.hypot(dx, dy), ux = dx / L2, uy = dy / L2;
+      return 1 / Math.sqrt((ux / l.rx) ** 2 + (uy / l.ry) ** 2);
+    };
+    // rings drawn as one closed outline when no atom in them is labelled
+    const drawnRingBond = new Set();
+    for (const r of rings) {
+      if (r.some(v => lbl[v])) continue;
+      add(strokeClosed(r.map(v => P[v]), T));
+      r.forEach((v, i) => drawnRingBond.add(bondKey(v, r[(i + 1) % r.length])));
+    }
+    const ringOf = key => rings.find(r => r.some((v, i) => bondKey(v, r[(i + 1) % r.length]) === key));
+    const centreOf = r => [r.reduce((s, v) => s + P[v][0], 0) / r.length, r.reduce((s, v) => s + P[v][1], 0) / r.length];
+    for (const b of bonds) {
+      const key = bondKey(b.a, b.b);
+      const A = P[b.a], B = P[b.b];
+      const dx = B[0] - A[0], dy = B[1] - A[1], len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+      const ta = trim(b.a, dx, dy), tb = trim(b.b, -dx, -dy);
+      const a = [A[0] + ux * ta, A[1] + uy * ta], c = [B[0] - ux * tb, B[1] - uy * tb];
+      const inArom = aromRings.some(r => r.some((v, i) => bondKey(v, r[(i + 1) % 6]) === key));
+      if (!drawnRingBond.has(key)) add(strokePolyline([a, c], [T]));
+      const order = (inArom && circleMode) ? 1 : (b.o === 4 ? 2 : b.o);
+      if (order < 2) continue;
+      const ring = ringOf(key);
+      if (ring) {
+        // inner line toward the ring centre, a bit shorter
+        const C = centreOf(ring);
+        let nx = -uy, ny = ux;
+        const mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2;
+        if ((C[0] - mx) * nx + (C[1] - my) * ny < 0) { nx = -nx; ny = -ny; }
+        const d = 0.17 * L, sh = 0.16 * len;
+        add(strokePolyline([[a[0] + nx * d + ux * sh, a[1] + ny * d + uy * sh], [c[0] + nx * d - ux * sh, c[1] + ny * d - uy * sh]], [T]));
+      } else {
+        const d = order === 2 ? 0.085 * em * S : 0.125 * em * S, nx = -uy * d, ny = ux * d;
+        // replace the centre line by two (double) or add two (triple)
+        if (order === 2) {
+          prims.pop();
+          add(strokePolyline([[a[0] + nx, a[1] + ny], [c[0] + nx, c[1] + ny]], [T]));
+          add(strokePolyline([[a[0] - nx, a[1] - ny], [c[0] - nx, c[1] - ny]], [T]));
+        } else {
+          add(strokePolyline([[a[0] + nx, a[1] + ny], [c[0] + nx, c[1] + ny]], [T]));
+          add(strokePolyline([[a[0] - nx, a[1] - ny], [c[0] - nx, c[1] - ny]], [T]));
+        }
+      }
+    }
+    if (circleMode) for (const r of aromRings) {
+      const C = centreOf(r);
+      const R = Math.min(...r.map(v => Math.hypot(P[v][0] - C[0], P[v][1] - C[1])));
+      add(circlePath(C[0], C[1], R * 0.6, T));
+    }
+    // bounds
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    const ext = (x, y) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
+    P.forEach((p, i) => { if (!labs[i]) { ext(p[0] - T, p[1] - T); ext(p[0] + T, p[1] + T); } });
+    labs.forEach(l => { if (l) { ext(l.x, l.y - l.box.d); ext(l.x + l.box.w, l.y + l.box.h); } });
+    // the line of the equation goes through the middle of the main ring (or the whole drawing)
+    const mainRing = rings.find(r => r.length === 6) || rings[0];
+    const cy = mainRing ? centreOf(mainRing)[1] : (y0 + y1) / 2;
+    const pad = 0.08 * em * F;
+    const dxs = -x0 + pad, dys = AXIS * ctx.s - cy;
+    const o = emptyBox();
+    for (const p of prims) o.prims.push({ path: p.path, x: dxs, y: dys, s: 1 });
+    labs.forEach(l => { if (l) appendBox(o, l.box, l.x + dxs, l.y + dys); });
+    o.w = x1 - x0 + 2 * pad;
+    o.h = Math.max(o.h, y1 + dys);
+    o.d = Math.max(o.d, -(y0 + dys));
+    o.eqs = []; o.isStruct = true; o.isMol = true;
+    o.core = [0, o.w]; o.coreD = o.d;
+    return o;
+  }
+
   // ---------- typed structural formulas: {# rows #} ----------
   // Rows are laid out like the text: '-' '=' '#' bonds between groups, '|' (or '‖') below/above an atom,
   // '/' '\' diagonal. Digits after a letter become subscripts. First line may hold options: !size=90 font=110 long
@@ -2966,15 +3205,28 @@ function createEngine(hb) {
   }
   function structBox(raw, ctx) {
     let lines = raw.replace(/\r/g, '').split('\n');
-    const opt = { size: 100, font: 100, long: false };
+    const opt = { size: 100, font: 100, long: false, name: 10, ncolor: '', benzene: '' };
     while (lines.length && !lines[0].trim()) lines.shift();
     if (lines.length && /^\s*!/.test(lines[0])) {
       const o = lines.shift().replace(/^\s*!/, '');
       for (const m of o.matchAll(/(size|font)\s*=\s*(\d+)/g)) opt[m[1]] = Math.max(30, Math.min(300, +m[2]));
+      const mn = o.match(/name\s*=\s*([\d.]+)/); if (mn) opt.name = Math.max(5, Math.min(40, +mn[1]));
+      const mc = o.match(/ncolor\s*=\s*(#?\w+)/); if (mc) opt.ncolor = mc[1];
+      if (/\bkekule\b/.test(o)) opt.benzene = 'kekule';
       if (/\blong\b/.test(o)) opt.long = true;
     }
+    // compound name lines start with @
+    const nameLines = lines.filter(l => /^\s*@/.test(l)).map(l => l.replace(/^\s*@\s?/, ''));
+    lines = lines.filter(l => !/^\s*@/.test(l));
+    const body = lines.join('\n').trim();
+    if (/^mol\s*[\{\[]/.test(body)) {
+      let mol = null;
+      try { mol = JSON.parse(body.replace(/^mol\s*/, '')); } catch (e) { mol = null; }
+      if (mol && mol.atoms) { const mb = addName(molBox(mol, ctx, opt), nameLines.join('\n'), ctx, opt); mb.isMolCore = true; return mb; }
+    }
+    if (lines.length === 1 && !lines[0].trim() && nameLines.length) lines = [];
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    if (!lines.length) return emptyBox();
+    if (!lines.length) return addName(emptyBox(), nameLines.join('\n'), ctx, opt);
     const ind = Math.min(...lines.filter(l => l.trim()).map(l => l.match(/^ */)[0].length));
     lines = lines.map(l => l.slice(ind).replace(/\t/g, '    '));
 
@@ -2982,7 +3234,7 @@ function createEngine(hb) {
     const F = ctx.s * opt.font / 100;          // label scale
     const em = UPEM;
     const lctx = sub(ctx, { s: F, script: true, struct: true });
-    const T = 26 * S;                           // bond thickness
+    const T = 40 * S;                           // bond thickness (0.7 pt at 13 pt)
     const HB = 0.5 * em * S, HG = 0.1 * em * S;   // horizontal bond length / end gap
     const VG = 0.13 * em * S, VS = 0.4 * em * S, VL = 0.7 * em * S;
     const DD = 0.38 * em * S;                   // diagonal horizontal run
@@ -3036,10 +3288,25 @@ function createEngine(hb) {
       return b;
     }
     for (const n of nodes) { n.box = lab(n.text); n.w = n.box.w; }
+    function atoms(t) {
+      const out = [];
+      const re = /[A-Z][a-z]?/g; let m;
+      while ((m = re.exec(t))) out.push({ s: m.index, e: m.index + m[0].length, sym: m[0] });
+      return out;
+    }
     function cx(n, k) {
       k = Math.max(0, Math.min(n.text.length - 1, Math.round(k)));
-      const a = k ? lab(n.text.slice(0, k)).w : 0;
-      const b = lab(n.text.slice(0, k + 1)).w;
+      const at = atoms(n.text);
+      let s0 = k, e0 = k + 1;
+      if (at.length) {
+        let best = at[0], bd = 1e9;
+        for (const a of at) { const d = k < a.s ? a.s - k : k >= a.e ? k - a.e + 1 : 0; if (d < bd) { bd = d; best = a; } }
+        const i = at.indexOf(best);
+        if (best.sym === 'H' && i > 0 && at[i - 1].sym !== 'H' && /^\d*$/.test(n.text.slice(at[i - 1].e, best.s))) best = at[i - 1];
+        s0 = best.s; e0 = best.e;
+      }
+      const a = s0 ? lab(n.text.slice(0, s0)).w : 0;
+      const b = lab(n.text.slice(0, e0)).w;
       return (a + b) / 2;
     }
     function nodeAt(r, c, dirRow) {
@@ -3175,15 +3442,15 @@ function createEngine(hb) {
     for (const e of hb) {
       const x1 = X(e.a.x + e.a.w) + HG, x2 = X(e.b.x) - HG, y = base[e.a.r] + axis;
       if (e.type === 1) line(x1, y, x2, y);
-      else if (e.type === 2) { const dy = 0.065 * em * S; line(x1, y + dy, x2, y + dy); line(x1, y - dy, x2, y - dy); }
-      else { const dy = 0.095 * em * S; line(x1, y + dy, x2, y + dy); line(x1, y, x2, y); line(x1, y - dy, x2, y - dy); }
+      else if (e.type === 2) { const dy = 0.085 * em * S; line(x1, y + dy, x2, y + dy); line(x1, y - dy, x2, y - dy); }
+      else { const dy = 0.125 * em * S; line(x1, y + dy, x2, y + dy); line(x1, y, x2, y); line(x1, y - dy, x2, y - dy); }
     }
     for (const e of vEdges) {
       const xu = X(e.u.x) + (e.frac ? lab(e.u.text.slice(0, Math.floor(e.ku) + 1)).w : cx(e.u, e.ku));
       const top = base[e.u.r] - VG, bot = base[e.d.r] + capF + VG;
       let y1 = top, y2 = bot;
       if (!opt.long) { const mid = (top + bot) / 2; y1 = mid + VS / 2; y2 = mid - VS / 2; }
-      if (e.type === 2) { const dx = 0.06 * em * S; line(xu - dx, y1, xu - dx, y2); line(xu + dx, y1, xu + dx, y2); }
+      if (e.type === 2) { const dx = 0.075 * em * S; line(xu - dx, y1, xu - dx, y2); line(xu + dx, y1, xu + dx, y2); }
       else line(xu, y1, xu, y2);
     }
     for (const e of dEdges) {
@@ -3197,7 +3464,7 @@ function createEngine(hb) {
     const out = emptyBox(); appendBox(out, o, pad, 0); out.w = o.w + 2 * pad;
     out.eqs = [];
     out.isStruct = true;
-    return out;
+    return addName(out, nameLines.join('\n'), ctx, opt);
   }
 
   function sub(ctx, extra) { return Object.assign({}, ctx, { inner: true }, extra); }
@@ -3347,6 +3614,8 @@ function createEngine(hb) {
     let u = 0, v = 0;
     if (sup) u = Math.max(0.63 * CAP * s, isText ? 0 : base.h - 0.55 * sup.h);
     if (sb) v = Math.max(0.43 * CAP * s, isText ? 0 : base.d + 0.3 * sb.h * 0.5);
+    const molBase = n.base.t === 'struct' && base.core;
+    if (sb && molBase && base.isMolCore) v = Math.max(v, Math.min(base.coreD - 0.35 * em * s, 0.45 * em * s));
     if (sup && sb) {
       const gap = (u - sup.d) - (sb.h - v);
       const minGap = 0.12 * em;
@@ -3357,10 +3626,11 @@ function createEngine(hb) {
     const sw = Math.max(sup ? sup.w : 0, sb ? sb.w : 0);
     const o = emptyBox();
     if (!left) {
+      const bx = base.core ? base.core[1] : base.w;
       appendBox(o, base, 0, 0);
-      if (sup) appendBox(o, sup, base.w + kern, u);
-      if (sb) appendBox(o, sb, base.w + kern * 0.3, -v);
-      o.w = base.w + kern + sw;
+      if (sup) appendBox(o, sup, bx + kern, u);
+      if (sb) appendBox(o, sb, bx + kern * 0.3, -v);
+      o.w = Math.max(base.w, bx + kern + sw);
     } else {
       if (sup) appendBox(o, sup, sw - sup.w, u);
       if (sb) appendBox(o, sb, sw - sb.w, -v);
@@ -3384,6 +3654,7 @@ function createEngine(hb) {
     const ctx = { F, s: 1, frac: 0, digits: opts.digits, dir: null, inner: false, mirror: !!opts.mirror };
     const boxes = lines.map(l => {
       const b = layoutSeq(l, ctx, dir);
+      alignNames(b);
       // first logical '=' at top level
       let eq = null;
       for (const q of b.eqs) if (!eq || q.order < eq.order) eq = q;
@@ -3438,7 +3709,9 @@ function createEngine(hb) {
     const fx = x => (x * k + pad), fy = y => ((top - y) * k + pad);
     const color = opts.color || '#000000';
     const parts = [];
+    const cols = [];
     for (const p of box.prims) {
+      cols.push(p.color || color);
       const d = p.path.replace(/(-?[\d.]+(?:e-?\d+)?),(-?[\d.]+(?:e-?\d+)?)/g, (m, a, b) => {
         const X = parseFloat(a), Y = parseFloat(b);
         return fx(p.x + X * p.s).toFixed(2) + ',' + fy(p.y + Y * p.s).toFixed(2);
@@ -3448,7 +3721,7 @@ function createEngine(hb) {
     const scale = opts.screenScale || 1;
     const metaObj = opts.meta ? Object.assign({}, opts.meta, { depthPt: depthInt, lines: box.lines || 1 }) : null;
     const meta = metaObj ? `<metadata id="alwafi-eq"><![CDATA[${JSON.stringify(metaObj).replace(/]]>/g, ']]&gt;')}]]></metadata>` : '';
-    const paths = parts.map(d => `<path fill="${color}" d="${fixPath(d)}"/>`).join('');
+    const paths = parts.map((d, k) => `<path fill="${cols[k]}" d="${fixPath(d)}"/>`).join('');
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${(Wpt * scale).toFixed(2)}${opts.units || 'pt'}" height="${(Hpt * scale).toFixed(2)}${opts.units || 'pt'}" viewBox="0 0 ${Wpt.toFixed(2)} ${Hpt.toFixed(2)}">${meta}${paths}</svg>`;
     return { svg, Wpt, Hpt, depthPt: depthInt };
   }
@@ -3687,64 +3960,63 @@ if (window.Office && Office.onReady){
   const ta = document.getElementById('src');
   const bar = document.getElementById('structbar');
   if (!ta || !bar) return;
-  const inSize = document.getElementById('st-size'), inFont = document.getElementById('st-font'), inLong = document.getElementById('st-long');
+  const $ = id => document.getElementById(id);
+  const inSize = $('st-size'), inFont = $('st-font'), inLong = $('st-long'), inKek = $('st-kek');
+  const inName = $('st-name'), inNSize = $('st-nsize'), inNColor = $('st-ncolor');
   function block(){
     const v = ta.value, p = ta.selectionStart;
     const a = v.lastIndexOf('{#', p);
     if (a < 0) return null;
     const close = v.indexOf('#}', a + 2);
     if (close < 0 || close + 2 < p) return null;
-    const bodyStart = a + 2;
-    const nl = v.indexOf('\n', bodyStart);
-    const firstLine = v.slice(bodyStart, nl < 0 || nl > close ? close : nl);
-    const hasHdr = /^\s*!/.test(firstLine);
-    return { a, close, bodyStart, firstLine, hasHdr };
+    const content = v.slice(a + 2, close);
+    let lines = content.split('\n');
+    let hdr = '';
+    if (/^\s*!/.test(lines[0])) { hdr = lines.shift().replace(/^\s*!/, ''); }
+    const names = lines.filter(l => /^\s*@/.test(l)).map(l => l.replace(/^\s*@\s?/, ''));
+    const body = lines.filter(l => !/^\s*@/.test(l));
+    while (body.length && !body[0].trim()) body.shift();
+    while (body.length && !body[body.length - 1].trim()) body.pop();
+    return { a, close, hdr, names, body };
   }
-  function readOpts(b){
-    const o = { size: 100, font: 100, long: false };
-    if (b.hasHdr){
-      const m1 = b.firstLine.match(/size\s*=\s*(\d+)/), m2 = b.firstLine.match(/font\s*=\s*(\d+)/);
-      if (m1) o.size = +m1[1]; if (m2) o.font = +m2[1];
-      o.long = /\blong\b/.test(b.firstLine);
-    }
-    return o;
+  function readOpts(h){
+    const g = (re, d) => { const m = h.match(re); return m ? m[1] : d; };
+    return { size: +g(/size\s*=\s*(\d+)/, 100), font: +g(/font\s*=\s*(\d+)/, 100), long: /\blong\b/.test(h), kek: /\bkekule\b/.test(h),
+             nsize: +g(/name\s*=\s*([\d.]+)/, 10), ncolor: g(/ncolor\s*=\s*(#?\w+)/, '') };
   }
   function refresh(){
     const b = block();
     bar.classList.toggle('hidden', !b);
     if (!b) return;
-    const o = readOpts(b);
-    if (document.activeElement !== inSize) inSize.value = o.size;
-    if (document.activeElement !== inFont) inFont.value = o.font;
-    inLong.checked = o.long;
+    const o = readOpts(b.hdr), act = document.activeElement;
+    if (act !== inSize) inSize.value = o.size;
+    if (act !== inFont) inFont.value = o.font;
+    if (act !== inNSize) inNSize.value = o.nsize;
+    if (act !== inName) inName.value = b.names.join(' / ');
+    inLong.checked = o.long; inKek.checked = o.kek; inNColor.value = o.ncolor;
   }
   function write(){
     const b = block(); if (!b) return;
     const size = Math.max(30, Math.min(300, parseInt(inSize.value) || 100));
     const font = Math.max(30, Math.min(300, parseInt(inFont.value) || 100));
+    const nsize = Math.max(5, Math.min(40, parseFloat(inNSize.value) || 10));
     const parts = [];
     if (size !== 100) parts.push('size=' + size);
     if (font !== 100) parts.push('font=' + font);
+    if (nsize !== 10) parts.push('name=' + nsize);
+    if (inNColor.value) parts.push('ncolor=' + inNColor.value);
     if (inLong.checked) parts.push('long');
-    const hdr = parts.length ? '!' + parts.join(' ') : '';
+    if (inKek.checked) parts.push('kekule');
+    const names = inName.value.split('/').map(s => s.trim()).filter(Boolean);
+    const text = '{#' + (parts.length ? '!' + parts.join(' ') : '') + '\n' + b.body.join('\n') + '\n' + names.map(n => '@' + n + '\n').join('') + '#}';
     const v = ta.value, caret = ta.selectionStart;
-    let before, after, delta;
-    if (b.hasHdr){
-      before = v.slice(0, b.bodyStart); after = v.slice(b.bodyStart + b.firstLine.length);
-      delta = hdr.length - b.firstLine.length;
-      ta.value = before + hdr + after;
-    } else if (hdr){
-      before = v.slice(0, b.bodyStart); after = v.slice(b.bodyStart);
-      const ins = after.startsWith('\n') ? hdr : hdr + '\n';
-      delta = ins.length;
-      ta.value = before + ins + after;
-    } else return;
-    const np = caret + (caret > b.bodyStart ? delta : 0);
+    ta.value = v.slice(0, b.a) + text + v.slice(b.close + 2);
+    const np = Math.min(caret, b.a + text.length - 2);
     ta.setSelectionRange(np, np);
     ta.dispatchEvent(new Event('input'));
   }
   for (const ev of ['keyup','click','select','input']) ta.addEventListener(ev, refresh);
-  inSize.addEventListener('change', write); inFont.addEventListener('change', write); inLong.addEventListener('change', write);
+  for (const el of [inSize, inFont, inLong, inKek, inNSize, inNColor, inName]) el.addEventListener('change', write);
   refresh();
 })();
 </script>
