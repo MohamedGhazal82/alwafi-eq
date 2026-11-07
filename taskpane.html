@@ -94,7 +94,7 @@ input[type=number]{width:64px}
       <span>الاتجاه</span><select id="dir"><option value="auto">تلقائي</option><option value="R">يمين ← شمال</option><option value="L">شمال → يمين</option></select>
       <span>الأرقام</span><select id="digits"><option value="asis">زي ما اتكتبت</option><option value="arabic">هندية ١٢٣</option></select>
       <span>السطور</span><select id="align"><option value="eq">تحت بعض عند =</option><option value="right">يمين</option><option value="center">وسط</option><option value="left">شمال</option></select>
-      <span>الجذر</span><label><input type="checkbox" id="mirror"> معكوس للعربي</label>
+      <span>الجذر</span><label><input type="checkbox" id="mirror" checked> يمين في العربي</label>
       <span>اللون</span><div class="swatches" id="swatches"></div>
     </div>
   </details>
@@ -2889,7 +2889,12 @@ function createEngine(hb) {
       case 'group': return layoutSeq(e.n.items, Object.assign({}, ctx, { inner: true }), rtl ? 'R' : 'L');
       case 'paren': return parenBox(e, ctx, rtl);
       case 'frac': return fracBox(e.n, ctx);
-      case 'root': return rootBox(e.n, ctx, rtl && ctx.mirror);
+      case 'root': {
+        // root sign on the right for Arabic content, on the left for Latin; digits only follow the line
+        const fs = firstStrong(e.n.body);
+        const arabic = fs ? fs === 'R' : rtl;
+        return rootBox(e.n, ctx, ctx.mirror && arabic);
+      }
       case 'script': return scriptBox(e, ctx, rtl);
     }
     return emptyBox();
@@ -3207,8 +3212,8 @@ function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){}
 const sw=$('swatches');
 COLORS.forEach(([c,n])=>{ const b=document.createElement('button'); b.className='sw'; b.style.background=c; b.title=n; b.dataset.c=c; b.onclick=()=>{color=c; markSw(); render();}; sw.appendChild(b); });
 function markSw(){ for(const b of sw.children) b.classList.toggle('on', b.dataset.c===color); }
-const st = lsGet('alwafi-addin-settings', null);
-if (st){ for (const k of ['size','weight','dir','digits','align']) if (st[k]!=null) $(k).value=st[k]; if (st.color) color=st.color; $('mirror').checked=!!st.mirror; }
+const st = lsGet('alwafi-addin-settings2', null);
+if (st){ for (const k of ['size','weight','dir','digits','align']) if (st[k]!=null) $(k).value=st[k]; if (st.color) color=st.color; $('mirror').checked=st.mirror!==false; }
 markSw();
 const ta=$('src');
 ta.value = lsGet('alwafi-addin-draft', '');
@@ -3218,7 +3223,7 @@ function applyOpts(o){
   if (!o) return;
   if (o.sizePt) $('size').value=o.sizePt;
   for (const k of ['weight','dir','digits','align']) if (o[k]) $(k).value=o[k];
-  $('mirror').checked=!!o.mirror; if (o.color){ color=o.color; markSw(); }
+  $('mirror').checked=o.mirror!==false; if (o.color){ color=o.color; markSw(); }
 }
 function insertText(before, after='', ph=''){
   const s=ta.selectionStart, e=ta.selectionEnd, v=ta.value, sel=v.slice(s,e)||ph;
@@ -3248,7 +3253,7 @@ function msg(t, kind){ const m=$('msg'); m.textContent=t||''; m.className='msg'+
 // ---------- render ----------
 function render(){
   const o=opts();
-  lsSet('alwafi-addin-settings', {size:$('size').value, weight:o.weight, dir:o.dir, digits:o.digits, align:o.align, mirror:o.mirror, color});
+  lsSet('alwafi-addin-settings2', {size:$('size').value, weight:o.weight, dir:o.dir, digits:o.digits, align:o.align, mirror:o.mirror, color});
   lsSet('alwafi-addin-draft', ta.value);
   if (!ready) { setBtns(); return; }
   const src=ta.value;
