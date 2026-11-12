@@ -2847,7 +2847,7 @@ function createEngine(hb) {
   const pathCache = new Map();
   const extCache = new Map();
 
-  let ellSlant = true;
+  let ellSlant = false;
   let fontKey = 'regular';
   function setFont(key, buffer) {
     const blob = new hb.Blob(buffer);
@@ -4441,7 +4441,7 @@ function createEngine(hb) {
   function layout(text, opts) {
     fontKey = opts.weight === 'bold' && fonts.bold ? 'bold' : 'regular';
     const F = fonts[fontKey];
-    ellSlant = opts.ell !== 'upright';
+    ellSlant = opts.ell === 'slant';
     if (!F) throw new Error('nofont');
     const lines = parseAll(text);
     let dir = opts.dir === 'auto' || !opts.dir ? null : opts.dir;
