@@ -41,6 +41,8 @@ input[type=number]{width:64px}
 .help{font-size:12.5px;line-height:1.8}
 .help code{direction:ltr;unicode-bidi:isolate;font-family:Consolas,monospace;background:#f1f3f6;border-radius:4px;padding:0 4px;white-space:nowrap}
 .hidden{display:none!important}
+.bar.conv{background:#eef4ff}
+.bar.conv code{direction:ltr;unicode-bidi:isolate;font-family:Consolas,monospace;background:#fff;border-radius:4px;padding:0 4px;white-space:nowrap}
 .structbar{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;background:#f0f7ec;border-radius:8px;padding:6px 10px;font-size:13px;margin:6px 0}.structbar input[type=number]{width:58px}.structbar .wide{flex:1 1 100%}.structbar input[type=text]{flex:1;min-width:120px;font:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:3px 6px}
 </style>
 </head>
@@ -62,6 +64,12 @@ input[type=number]{width:64px}
     <button id="opensd" class="primary" style="flex:1;padding:9px;font-size:14px;border-radius:10px;background:#28A745;border-color:#28A745">⌬ رسم الصيغ البنائية</button>
   </div>
 
+  <div class="bar conv" id="convbar">
+    <b>أكواد مكتوبة في الصفحة</b>
+    <button id="convert" class="primary">حوّل الأكواد</button>
+    <button id="revert" title="ترجّع الأسهم والمعادلات المحوّلة لكودها عشان تعدّله">رجّعها كود</button>
+    <span class="msg" style="flex-basis:100%;margin:0">اكتب في الوورد <code>{>O2/500C}</code> أو <code>{>CO|400:700C}</code> أو معادلة بين <code>$ $</code>، ودوس «حوّل». لو محدد جزء بيتحول هو بس، غير كده الملف كله.</span>
+  </div>
   <div class="tools" id="tools">
     <button data-ins="frac" title="كسر {البسط}/{المقام}">كسر</button>
     <button data-ins="sqrt" title="جذر">√</button>
@@ -133,7 +141,10 @@ input[type=number]{width:64px}
       أسهم <code>{>}</code> <code>{=}</code> <code>{>h}</code> <code>{>MnO_2}</code> <code>{=فوق/تحت}</code><br>
       تركيب: زرار «تركيب» واكتب الصفوف زي ما هتطلع، <code>-</code> <code>=</code> <code>#</code> روابط و <code>|</code> رأسية تحت الحرف<br>
       Enter = سطر جديد، والسطور بتتظبط عند =<br>
-      Ctrl+Enter = إدراج
+      Ctrl+Enter = إدراج<br>
+      <b>الأكواد في الصفحة:</b> <code>/</code> بتكتب شرطة جنب الكلام، و <code>|</code> بتفصل اللي فوق السهم عن اللي تحت: <code>{>O2/500C}</code> <code>{=N2/H2|Fe/450C}</code><br>
+      الأرقام بعد الحروف بتبقى سفلي لوحدها (O2 ← O₂)، و <code>500C</code> ← 500 °C، و <code>400:700C</code> ← 400 : 700 °C، و <code>h</code> ← Δ<br>
+      أكواد الخط اللي زي <code>{>h}</code> بتفضل زي ما هي لأن الخط بيرسمها لوحده
     </div>
   </details>
 </div>
@@ -2564,11 +2575,10 @@ let structSeq = 0;
       if (peek() !== '{') return null;
       const n = peek(1);
       if (n !== '>' && n !== '=' && n !== '<') return null;
-      const j = s.indexOf('}', i);
-      if (j < 0) return null;
-      const body = s.slice(i, j + 1);
-      if (body.indexOf('{', 1) >= 0) return null;
-      return body;
+      let d = 0, j = i;
+      for (; j < s.length; j++) { if (s[j] === '{') d++; else if (s[j] === '}') { d--; if (d === 0) break; } }
+      if (j >= s.length) return null;
+      return s.slice(i, j + 1);
     }
     function readRaw() {
       while (peek() === ' ') i++;
@@ -3069,7 +3079,10 @@ function createEngine(hb) {
     const dbl = code[1] === '<' && code[2] === '>';
     const kind = dbl ? 'd' : code[1] === '=' ? 'e' : 'r';
     const body = code.slice(dbl ? 3 : 2, -1);
-    const parts = body.split('/');
+    // '|' splits above / below when present (then '/' is printed as a slash); otherwise '/' splits as before
+    const parts = (() => { const sep = /\|/.test(body) ? '|' : '/'; const out = []; let d = 0, st = 0;
+      for (let k = 0; k < body.length; k++) { const c = body[k]; if (c === '{') d++; else if (c === '}') d--; else if (c === sep && d === 0) { out.push(body.slice(st, k)); st = k + 1; } }
+      out.push(body.slice(st)); return sep === '|' ? out.map(t => t.replace(/\//g, ' ∕ ')) : out; })();
     const lctx = sub(ctx, { s: s * 0.7, script: true });
     const labs = parts.slice(0, 2).map(p => p.trim() ? layoutSeq(parseOne(p.trim()), lctx, null) : null);
     const th = 26 * s, HLs = 366 * s, HHs = 120 * s, GAPs = 36 * s, SBs = 55 * s, a = AXIS * s;
@@ -5867,6 +5880,101 @@ root.AlwafiChemName = { nameOf, structureFromName, parseName };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>
+// Find Alwafi codes typed in a Word paragraph and turn them into engine sources.
+//   {>…} {=…} {<>…}  arrows:  '/' prints a slash on the same line, '|' splits above | below
+//   $…$              a whole equation in the pane's syntax
+(function (root) {
+  const COND = ['h', 'dil', 'conc', 'cat', 'p', 'h/cat', 'p/h', 'conc/h', 'ph/cat', 'h/p', 'p/cat', 'dil/h', 'Fe', 'Ni', 'Pt', 'V2O5', 'H+', 'hv',
+    'Fe/h', 'Ni/h', 'Pt/h', 'V2O5/h', 'H+/h', 'hr', 'ah', 'dg', 'sh', 'dw', 'hr/ah', 'dg/hr'];
+  const FONT = new Set();
+  for (const k of ['>', '=']) {
+    FONT.add('{' + k + '}');
+    for (const c of COND) FONT.add('{' + k + c + '}');
+    for (let n = 0; n <= 1000; n++) { FONT.add('{' + k + n + 'C}'); FONT.add('{' + k + n + 'K}'); }
+  }
+  // the font already draws these while you type
+  const isFontCode = code => FONT.has(code);
+
+  const WORDS = { h: 'Δ', cat: 'cat.', p: 'P', conc: 'conc.', dil: 'dil.', hv: 'hν', 'H+': 'H^{+}', ph: 'P , Δ',
+    hr: 'حرارة', ah: 'عامل حفاز', dg: 'ضغط', sh: 'شرارة كهربية', dw: 'ضوء' };
+
+  // O2 -> O_{2}, Fe3+ -> Fe^{3+}, SO4 2- stays readable; leaves _ ^ { } as typed
+  function chemify(t) {
+    let out = '';
+    for (let k = 0; k < t.length; k++) {
+      const c = t[k], prev = t[k - 1];
+      if (/[0-9]/.test(c) && prev && /[A-Za-z)\]]/.test(prev)) {
+        let j = k; while (j < t.length && /[0-9]/.test(t[j])) j++;
+        const digits = t.slice(k, j);
+        if (t[j] === '+' || t[j] === '-' || t[j] === '−') { out += '^{' + digits + (t[j] === '-' ? '−' : t[j]) + '}'; k = j; continue; }
+        out += '_{' + digits + '}'; k = j - 1; continue;
+      }
+      if ((c === '+' || c === '-') && prev && /[A-Za-z)\]}]/.test(prev) && (k === t.length - 1 || /[\s/|,]/.test(t[k + 1]))) {
+        out += '^{' + (c === '-' ? '−' : '+') + '}'; continue;
+      }
+      out += c;
+    }
+    return out;
+  }
+  function token(t) {
+    const s = t.trim(); if (!s) return '';
+    if (WORDS[s]) return WORDS[s];
+    let m = s.match(/^(\d+(?:\.\d+)?)\s*(?::|-|–)\s*(\d+(?:\.\d+)?)\s*([CK])$/);
+    if (m) return m[1] + ' : ' + m[2] + (m[3] === 'C' ? ' °C' : ' K');
+    m = s.match(/^(\d+(?:\.\d+)?)\s*°?\s*([CK])$/);
+    if (m) return m[1] + (m[2] === 'C' ? ' °C' : ' K');
+    if (/[؀-ۿ]/.test(s)) return s;
+    return chemify(s);
+  }
+  function splitTop(t, sep) {
+    const out = []; let d = 0, st = 0;
+    for (let k = 0; k < t.length; k++) { const c = t[k]; if (c === '{') d++; else if (c === '}') d--; else if (c === sep && d === 0) { out.push(t.slice(st, k)); st = k + 1; } }
+    out.push(t.slice(st)); return out;
+  }
+  // one label: tokens joined by a printed slash
+  const label = t => splitTop(t, '/').map(token).filter(Boolean).join(' ∕ ');
+  function arrowSrc(code) {
+    const head = code.startsWith('{<>') ? '{<>' : code.slice(0, 2);
+    const body = code.slice(head.length, -1);
+    const [top, bot] = splitTop(body, '|');
+    const T = label(top || ''), B = bot !== undefined ? label(bot) : '';
+    return head + T + (B ? '/' + B : '') + '}';
+  }
+  // inside $…$: only the arrow codes are rewritten, the rest is the pane's syntax as typed
+  function eqSrc(t) {
+    let out = '', k = 0;
+    while (k < t.length) {
+      const a = arrowAt(t, k);
+      if (a) { out += arrowSrc(a); k += a.length; } else out += t[k++];
+    }
+    return out.trim();
+  }
+  function arrowAt(t, k) {
+    if (t[k] !== '{') return null;
+    if (!(t[k + 1] === '>' || t[k + 1] === '=' || (t[k + 1] === '<' && t[k + 2] === '>'))) return null;
+    let d = 0, j = k;
+    for (; j < t.length; j++) { if (t[j] === '{') d++; else if (t[j] === '}') { d--; if (d === 0) break; } }
+    return j < t.length ? t.slice(k, j + 1) : null;
+  }
+  // -> [{text, src, kind}] in order of appearance
+  function find(text) {
+    const res = []; let k = 0;
+    while (k < text.length) {
+      if (text[k] === '$') {
+        const j = text.indexOf('$', k + 1);
+        if (j > k + 1) { const inner = text.slice(k + 1, j); res.push({ text: text.slice(k, j + 1), src: eqSrc(inner), kind: 'eq' }); k = j + 1; continue; }
+      }
+      const a = arrowAt(text, k);
+      if (a) { if (!isFontCode(a)) res.push({ text: a, src: arrowSrc(a), kind: 'arrow' }); k += a.length; continue; }
+      k++;
+    }
+    return res;
+  }
+  root.AlwafiConv = { find, arrowSrc, eqSrc, isFontCode, chemify };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script type="module">
 (function(){
 const $ = id => document.getElementById(id);
@@ -6016,6 +6124,84 @@ async function doInsert(replace){
 }
 $('insert').onclick = ()=>doInsert(false);
 $('update').onclick = ()=>doInsert(true);
+
+// ---------- convert codes typed in the document ----------
+function srchEsc(t){ return t.replace(/\^/g,'^^'); }
+function runOpts(font){
+  const o = opts();
+  const sz = +font.size; if (sz > 0) o.sizePt = sz;
+  o.weight = font.bold === true ? 'bold' : 'regular';
+  const c = (font.color||'').toString();
+  o.color = /^#[0-9a-f]{6}$/i.test(c) && c.toUpperCase() !== '#000000' ? c : '#000000';
+  o.align = 'eq';
+  return o;
+}
+async function convertCodes(){
+  if (!inWord){ msg('افتح اللوحة من جوه الوورد.','err'); return; }
+  if (!ready){ msg('اختار ملف الخط الأول.','err'); return; }
+  msg('بدوّر على الأكواد…');
+  let done = 0, bad = [];
+  try{
+    await Word.run(async ctx=>{
+      const sel = ctx.document.getSelection(); sel.load('text'); await ctx.sync();
+      const scope = sel.text && sel.text.trim() ? sel : ctx.document.body;
+      const paras = scope.paragraphs; paras.load('items/text'); await ctx.sync();
+      const jobs = [];
+      for (const p of paras.items){
+        const seen = new Set();
+        for (const f of AlwafiConv.find(p.text || '')){
+          if (seen.has(f.text) || f.text.length > 250) continue; seen.add(f.text);
+          const rs = p.search(srchEsc(f.text), { matchCase:true, matchWildcards:false });
+          rs.load('items/font/size,items/font/bold,items/font/color');
+          jobs.push({ f, rs });
+        }
+      }
+      if (!jobs.length){ await ctx.sync(); return; }
+      await ctx.sync();
+      for (const { f, rs } of jobs){
+        for (const r of rs.items){
+          try{
+            const o = runOpts(r.font);
+            const box = engine.layout(f.src, o);
+            const out = engine.toSVG(box, { sizePt:o.sizePt, color:o.color, units:'pt', meta:{ app:'alwafi-eq', v:1, src:f.src, opts:o } });
+            const png = await pngBase64(out.svg, out.Wpt, out.Hpt);
+            const depth = (box.lines||1) === 1 ? out.depthPt : 0;
+            const descr = TAG + JSON.stringify({ src:f.src, opts:o, code:f.text });
+            r.insertOoxml(buildOoxml(out.svg, png, out.Wpt, out.Hpt, depth, descr, false), 'Replace');
+            done++;
+          }catch(e){ console.error(e); bad.push(f.text); }
+        }
+      }
+      await ctx.sync();
+    });
+    if (!done && !bad.length) msg('مالقيتش أكواد تتحول. (أكواد الخط زي {>h} الخط بيرسمها لوحده.)');
+    else msg('اتحوّل ' + done + (bad.length ? ' — ومافهمتش: ' + bad.join(' ، ') : ''), bad.length ? 'err' : 'good');
+  }catch(e){ console.error(e); msg('الوورد رفض التحويل: '+(e.message||e),'err'); }
+}
+async function revertCodes(){
+  if (!inWord) return;
+  let n = 0;
+  try{
+    await Word.run(async ctx=>{
+      const sel = ctx.document.getSelection(); sel.load('text'); await ctx.sync();
+      const scope = sel.text && sel.text.trim() ? sel : ctx.document.body;
+      const pics = scope.inlinePictures; pics.load('items/altTextDescription'); await ctx.sync();
+      for (const p of pics.items){
+        const d = p.altTextDescription || '';
+        if (!d.startsWith(TAG)) continue;
+        let j = null; try{ j = JSON.parse(d.slice(TAG.length)); }catch(e){}
+        if (!j || !j.code) continue;
+        const r = p.getRange('Whole').insertText(j.code, 'Replace');
+        r.font.name = 'Alwafi'; if (j.opts){ r.font.size = j.opts.sizePt || 13; r.font.bold = j.opts.weight === 'bold'; }
+        n++;
+      }
+      await ctx.sync();
+    });
+    msg(n ? 'رجعت ' + n + ' كود. عدّل وبعدين دوس «حوّل الأكواد».' : 'مافيش أكواد محوّلة في الجزء ده.', n ? 'good' : '');
+  }catch(e){ console.error(e); msg('الوورد رفض: '+(e.message||e),'err'); }
+}
+$('convert').onclick = convertCodes;
+$('revert').onclick = revertCodes;
 
 async function loadFromSelection(silent){
   if (!inWord) return false;
